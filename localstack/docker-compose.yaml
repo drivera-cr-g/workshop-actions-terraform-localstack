@@ -1,0 +1,49 @@
+services:
+  localstack:
+    image: localstack/localstack
+    container_name: localstack
+    ports:
+      - "4566:4566"
+      - "4510-4559:4510-4559"
+      - "4571:4571"
+    environment:
+      SERVICES: dynamodb,s3, sts, secretsmanager
+      DEBUG: 1
+      LOCALSTACK_AUTH_TOKEN: ...
+    networks:
+      - local
+
+  dynamodb-admin:
+    image: "aaronshaf/dynamodb-admin:latest"
+    container_name: "dynamodb-viewer"
+    ports:
+      - "8001:8001"
+    environment:
+      DYNAMO_ENDPOINT: http://localstack:4566
+      AWS_REGION: us-east-1
+      AWS_ACCESS_KEY_ID: 000000000000
+      AWS_SECRET_ACCESS_KEY: test
+    depends_on:
+      - localstack
+    networks:
+      - local
+
+  s3manager:
+    image: cloudlena/s3manager:latest
+    container_name: s3manager
+    ports:
+      - 8080:8080
+    environment:
+      ENDPOINT: localstack:4566
+      ACCESS_KEY_ID: 000000000000
+      SECRET_ACCESS_KEY: test
+      USE_SSL: false
+      REGION: us-east-1
+    depends_on:
+      - localstack
+    networks:
+      - local
+
+networks:
+  local:
+    driver: bridge
