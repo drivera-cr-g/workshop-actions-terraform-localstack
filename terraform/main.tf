@@ -21,3 +21,25 @@ provider "aws" {
     secretsmanager = var.endpoint
   }
 }
+
+module "dynamodb" {
+  source = "./modules/dynamodb"
+  providers = {
+    aws.localstack = aws.localstack
+  }
+  dynamo_tables = var.dynamo_tables
+}
+
+module "s3" {
+  source = "./modules/s3"
+  providers = {
+    aws.localstack = aws.localstack
+  }
+  s3_bucket = var.s3_bucket
+  content = jsonencode({
+    sample_table = module.dynamodb.dynamo_sample_table.name
+    bucket       = module.s3.s3_bucket
+    logs         = format("%s: The table %s was created, along with the %s bucket", timestamp(), module.dynamodb.dynamo_sample_table.name, module.s3.s3_bucket)
+  })
+  key = var.s3_key
+}
