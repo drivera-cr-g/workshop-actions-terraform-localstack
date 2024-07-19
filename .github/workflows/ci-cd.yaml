@@ -5,12 +5,102 @@ on:
     branches:
       - main
   workflow_dispatch:
-  
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
 
+    env:
+      TF_VAR_account_id: ${{ secrets.account_id }}
+      TF_VAR_secret_key: ${{ secrets.secret_key }}
+      TF_VAR_region: ${{ env.region }}
+      TF_VAR_endpoint: ${{ env.endpoint }}
+      TF_VAR_s3_bucket: ${{ env.s3_bucket }}
+      TF_VAR_s3_key: ${{ env.s3_key }}
+      TF_VAR_dynamo_tables: ${{ env.dynamo_tables }}
+
     steps:
-    - name: Hello world
-      run: echo "Hello, world!"
+      - name: Hello world
+        run: echo "Hello, world!"
+
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.9.2
+
+      # Alternate way to set an env variable
+      # - name: Set Terraform variables
+      #   run: |
+      #     echo 'TF_VAR_dynamo_tables=[{"name": "SampleTable", "billing_mode": "PAY_PER_REQUEST", "hash_key": "MainIndexKey"}]' >> $GITHUB_ENV
+
+      - name: Replace 'host' with 'stack' in backend.tf
+        run: |
+          sed -i 's/host/stack/g' ./backend.tf
+        working-directory: ./terraform
+
+      - name: Terraform Init
+        id: terraform_init
+        run: terraform init
+        working-directory: ./terraform
+
+      - name: Terraform Plan
+        if: steps.terraform_init.outcome == 'success'
+        id: terraform_plan
+        run: terraform plan
+        working-directory: ./terraform
+
+      - name: Terraform Apply
+        id: terraform_apply
+        if: steps.terraform_plan.outcome == 'success'
+        run: terraform apply -auto-approve
+        working-directory: ./terraform
+
+      - name: Check Host Availability
+        run: |
+          chmod +x ./utils/check_host.sh
+          ./utils/check_host.sh
+
+      - name: Call and save logs
+        id: save_logs
+        if: env.HOST_AVAILABLE == 'true'
+        run: |
+          response=$(curl -sL http://workshop:80/logs)
+          echo "response=$response" >> $GITHUB_ENV
+
+      - name: Install AWS CLI
+        id: install_aws_cli
+        if: steps.save_logs.outcome == 'success'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y awscli
+          aws --version
+
+      - name: Log the logs response
+        if: steps.install_aws_cli.outcome == 'success'
+        run: |
+          echo "The response from the logs URL was: ${{ env.response }}"
+          timestamp=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+          response=${{ env.response }}
+          item=$(jq -n --arg ts "$timestamp" --arg resp "$response" '{TimeStamp: {S: $ts}, Response: {S: $resp}}')
+          aws dynamodb put-item \
+            --table-name gha_logs \
+            --item "$item" \
+            --endpoint-url ${{ env.endpoint }} \
+            --region ${{ env.region }}
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.account_id }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.secret_key }}
+          AWS_DEFAULT_REGION: ${{ env.region }}
+
+      - name: Terraform Plan Destroy
+        if: always() && steps.terraform_apply.outcome == 'success'
+        run: terraform plan -destroy
+        working-directory: ./terraform
+
+      - name: Terraform Destroy
+        if: always() && steps.terraform_apply.outcome == 'success'
+        run: terraform destroy -auto-approve
+        working-directory: ./terraform
